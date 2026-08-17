@@ -3,32 +3,28 @@ name: Build LLMEdge GPU APK
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
     env:
-      LLMEDGE_ANDROID_OPENCL: "ON"
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
       SDKMANAGER: /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager
 
     steps:
       - name: Setup Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Install Android and Vulkan tools
         run: |
-          echo "Android SDK:"
-          ls -la "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/"
-          "$SDKMANAGER" --version
-
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-
           "$SDKMANAGER" \
             "platforms;android-35" \
             "build-tools;35.0.0" \
@@ -42,8 +38,6 @@ jobs:
             ninja-build
 
           glslc --version
-          "$ANDROID_SDK_ROOT/cmake/3.22.1/bin/cmake" --version
-          test -d "$ANDROID_SDK_ROOT/ndk/27.2.12479018"
 
       - name: Clone official LLMEdge
         run: |
@@ -61,27 +55,25 @@ jobs:
             's/applicationId = "com.example.llmedgeexample"/applicationId = "com.example.llmedgeexample.gpuv5"/' \
             app/build.gradle.kts
 
-          echo "Application ID:"
           grep 'applicationId' app/build.gradle.kts
 
-      - name: Build GPU library
+      - name: Build Vulkan GPU library
         run: |
           cd llmedge
 
+          rm -rf llmedge/.cxx
+
           ./gradlew :llmedge:assembleRelease \
-            -PllmedgeAndroidOpencl=ON \
             -Pandroid.injected.build.api=30 \
             -Pandroid.jniCmakeArgs="-DSD_VULKAN=ON -DGGML_VULKAN=ON" \
             --no-daemon \
             --stacktrace
 
-      - name: Build GPU APK
+      - name: Build Vulkan GPU APK
         run: |
           cd llmedge/llmedge-examples
 
-          LLMEDGE_SKIP_SDK_REVISION_CHECK=true \
           ./gradlew :app:assembleDebug \
-            -PllmedgeAndroidOpencl=ON \
             -Pandroid.jniCmakeArgs="-DSD_VULKAN=ON -DGGML_VULKAN=ON" \
             --no-daemon \
             --stacktrace
@@ -91,13 +83,9 @@ jobs:
           APK="llmedge/llmedge-examples/app/build/outputs/apk/debug/app-debug.apk"
 
           test -f "$APK"
-
           cp "$APK" LLMEdge-GPU-v5.apk
 
-          echo "APK created:"
           ls -lh LLMEdge-GPU-v5.apk
-
-          echo "SHA256:"
           sha256sum LLMEdge-GPU-v5.apk
 
       - name: Upload APK
