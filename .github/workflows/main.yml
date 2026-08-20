@@ -23,7 +23,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install Android and Vulkan tools
+      - name: Install Android and GPU build tools
         run: |
           "$SDKMANAGER" \
             "platforms;android-35" \
@@ -44,41 +44,35 @@ jobs:
           git clone --recursive https://github.com/Aatricks/llmedge.git llmedge
           cd llmedge
           git submodule update --init --recursive
-          chmod +x gradlew
-          chmod +x llmedge-examples/gradlew
 
-      - name: Create separate GPU v5 app
+      - name: Create separate GPU v6 app
         run: |
           cd llmedge/llmedge-examples
 
           sed -i \
-            's/applicationId = "com.example.llmedgeexample"/applicationId = "com.example.llmedgeexample.gpuv5"/' \
+            's/applicationId = "com.example.llmedgeexample"/applicationId = "com.example.llmedgegpuv6"/' \
             app/build.gradle.kts
 
           grep 'applicationId' app/build.gradle.kts
 
-      - name: Build Vulkan GPU library
+      - name: Build OpenCL and Vulkan GPU library
         run: |
           cd llmedge
 
           rm -rf llmedge/.cxx
 
           ./gradlew :llmedge:assembleRelease \
-                  -PllmedgeAndroidOpencl=ON \
+            -PllmedgeAndroidOpencl=ON \
             -Pandroid.injected.build.api=30 \
-            -Pandroid.jniCmakeArgs="-DSD_VULKAN=ON -DGGML_VULKAN=ON" \
+            -Pandroid.jniCmakeArgs="-DGGML_VULKAN=ON -DSD_VULKAN=ON" \
             --no-daemon \
             --stacktrace
 
-      - name: Build Vulkan GPU APK
+      - name: Build GPU APK
         run: |
           cd llmedge/llmedge-examples
 
           ./gradlew :app:assembleDebug \
-                ./gradlew :app:assembleDebug \
-        -PllmedgeAndroidOpencl=ON \
-        -Pandroid.jniCmakeArgs="-DSD_VULKAN=ON -DGGML_VULKAN=ON" \
-            -Pandroid.jniCmakeArgs="-DSD_VULKAN=ON -DGGML_VULKAN=ON" \
             --no-daemon \
             --stacktrace
 
@@ -87,15 +81,15 @@ jobs:
           APK="llmedge/llmedge-examples/app/build/outputs/apk/debug/app-debug.apk"
 
           test -f "$APK"
-          cp "$APK" LLMEdge-GPU-v5.apk
+          cp "$APK" LLMEdge-GPU-v6.apk
 
-          ls -lh LLMEdge-GPU-v5.apk
-          sha256sum LLMEdge-GPU-v5.apk
+          ls -lh LLMEdge-GPU-v6.apk
+          sha256sum LLMEdge-GPU-v6.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: LLMEdge-GPU-v5
-          path: LLMEdge-GPU-v5.apk
+          name: LLMEdge-GPU-v6
+          path: LLMEdge-GPU-v6.apk
           retention-days: 7
           if-no-files-found: error
