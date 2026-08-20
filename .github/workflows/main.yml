@@ -64,6 +64,7 @@ jobs:
           rm -rf llmedge/.cxx
 
           ./gradlew :llmedge:assembleRelease \
+                  -PllmedgeAndroidOpencl=ON \
             -Pandroid.injected.build.api=30 \
             -Pandroid.jniCmakeArgs="-DSD_VULKAN=ON -DGGML_VULKAN=ON" \
             --no-daemon \
@@ -74,6 +75,9 @@ jobs:
           cd llmedge/llmedge-examples
 
           ./gradlew :app:assembleDebug \
+                ./gradlew :app:assembleDebug \
+        -PllmedgeAndroidOpencl=ON \
+        -Pandroid.jniCmakeArgs="-DSD_VULKAN=ON -DGGML_VULKAN=ON" \
             -Pandroid.jniCmakeArgs="-DSD_VULKAN=ON -DGGML_VULKAN=ON" \
             --no-daemon \
             --stacktrace
