@@ -72,6 +72,8 @@ jobs:
           cd llmedge/llmedge-examples
 
           ./gradlew :app:assembleDebug \
+            -Pandroid.injected.build.api=30 \
+            -Pandroid.jniCmakeArgs="-DGGML_VULKAN=ON -DSD_VULKAN=ON" \
             --no-daemon \
             --stacktrace
 
