@@ -55,14 +55,13 @@ jobs:
 
           grep 'applicationId' app/build.gradle.kts
 
-      - name: Build OpenCL and Vulkan GPU library
+      - name: Build Vulkan GPU library
         run: |
           cd llmedge
 
           rm -rf llmedge/.cxx
 
           ./gradlew :llmedge:assembleRelease \
-            -PllmedgeAndroidOpencl=ON \
             -Pandroid.injected.build.api=30 \
             -Pandroid.jniCmakeArgs="-DGGML_VULKAN=ON -DSD_VULKAN=ON" \
             --no-daemon \
