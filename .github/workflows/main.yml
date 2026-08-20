@@ -198,33 +198,36 @@ jobs:
               "forceSequentialLoad = true,"
           )
 
-          needle = """                    val request =
-                          VideoGenerationRequestFactory.create(
-                              config.copy(initImage = resizedInitImage),
-                          )"""
+          # Robust insertion: source indentation may change between commits.
+          request_line = re.search(
+              r'(?m)^(\s*)val request\s*=\s*$',
+              s,
+          )
 
-          replacement = """                    // Download/cache large assets BEFORE starting
-                      // the isolated diffusion worker. This avoids the
-                      // RESOLVING_MODEL watchdog killing a slow first download.
-                      withContext(Dispatchers.Main) {
-                          callbacks.onProgress(0, "Downloading / checking model cache...")
-                      }
-                      config.model?.let { edge.models.prefetch(it) }
-                      config.vae?.let { edge.models.prefetch(it) }
-                      config.textEncoder?.let { edge.models.prefetch(it) }
+          if request_line is None:
+              raise SystemExit("ERROR: val request insertion point not found")
 
-                      withContext(Dispatchers.Main) {
-                          callbacks.onProgress(0, "Model cache ready. Starting video...")
-                      }
+          indent = request_line.group(1)
 
-                      val request =
-                          VideoGenerationRequestFactory.create(
-                              config.copy(initImage = resizedInitImage),
-                          )"""
+          prefetch = (
+              f'{indent}// Pre-download/cache large Wan assets before starting worker.\n'
+              f'{indent}withContext(Dispatchers.Main) {{\n'
+              f'{indent}    callbacks.onProgress(0, "Downloading / checking model cache...")\n'
+              f'{indent}}}\n'
+              f'{indent}config.model?.let {{ edge.models.prefetch(it) }}\n'
+              f'{indent}config.vae?.let {{ edge.models.prefetch(it) }}\n'
+              f'{indent}config.textEncoder?.let {{ edge.models.prefetch(it) }}\n'
+              f'{indent}withContext(Dispatchers.Main) {{\n'
+              f'{indent}    callbacks.onProgress(0, "Model cache ready. Starting video...")\n'
+              f'{indent}}}\n'
+          )
 
-          if needle not in s:
-              raise SystemExit("ERROR: request insertion point not found")
-          s = s.replace(needle, replacement, 1)
+          s = (
+              s[:request_line.start()]
+              + prefetch
+              + s[request_line.start():]
+          )
+
           controller.write_text(s)
 
           # --------------------------------------------------
