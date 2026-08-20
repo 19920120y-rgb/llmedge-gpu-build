@@ -1,4 +1,4 @@
-name: Build LLMEdge GPU APK
+name: Build LLMEdge I2V v8 APK
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
 
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
@@ -23,7 +23,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install Android and GPU build tools
+      - name: Install Android and Vulkan tools
         run: |
           "$SDKMANAGER" \
             "platforms;android-35" \
@@ -37,32 +37,241 @@ jobs:
             libvulkan-dev \
             ninja-build
 
-          glslc --version
-
       - name: Clone official LLMEdge
         run: |
           git clone --recursive https://github.com/Aatricks/llmedge.git llmedge
           cd llmedge
           git submodule update --init --recursive
 
-      - name: Create separate GPU v6 app
+      - name: Patch I2V v8
         run: |
-          cd llmedge/llmedge-examples
+          python3 <<'PY'
+          from pathlib import Path
+          import re
 
-          sed -i \
-            's/applicationId = "com.example.llmedgeexample"/applicationId = "com.example.llmedgegpuv7"/' \
-            app/build.gradle.kts
+          root = Path("llmedge")
+          ex = root / "llmedge-examples"
 
-          grep 'applicationId' app/build.gradle.kts
+          # --------------------------------------------------
+          # 1. Separate app/package so it is easy to identify.
+          # --------------------------------------------------
+          gradle = ex / "app/build.gradle.kts"
+          s = gradle.read_text()
+          s = s.replace(
+              'applicationId = "com.example.llmedgeexample"',
+              'applicationId = "com.example.llmedgei2vv8"'
+          )
+          gradle.write_text(s)
 
-          sed -i 's#<string name="app_name">llmedge Example</string>#<string name="app_name">LLMEdge GPU v7</string>#'             app/src/main/res/values/strings.xml
+          manifest = ex / "app/src/main/AndroidManifest.xml"
+          s = manifest.read_text()
+          s = s.replace('android:label="llmedge Example"',
+                        'android:label="LLMEdge I2V v8"')
+          manifest.write_text(s)
 
-          grep 'app_name' app/src/main/res/values/strings.xml
+          strings = ex / "app/src/main/res/values/strings.xml"
+          if strings.exists():
+              s = strings.read_text()
+              s = re.sub(
+                  r'<string name="app_name">.*?</string>',
+                  '<string name="app_name">LLMEdge I2V v8</string>',
+                  s,
+              )
+              strings.write_text(s)
+
+          # --------------------------------------------------
+          # 2. Wan 2.2 Q6_K -> Q3_K_S.
+          #    Also use Android system downloader.
+          # --------------------------------------------------
+          form = ex / (
+              "app/src/main/java/com/example/llmedgeexample/"
+              "demo/video/VideoGenerationFormSupport.kt"
+          )
+          s = form.read_text()
+
+          s = s.replace(
+              'displayName = "Wan 2.2 TI2V 5B Q6_K"',
+              'displayName = "Wan 2.2 TI2V 5B Q3_K_S (mobile)"'
+          )
+          s = s.replace(
+              'filename = "Wan2.2-TI2V-5B-Q6_K.gguf",',
+              'filename = "Wan2.2-TI2V-5B-Q3_K_S.gguf",\n'
+              '                        preferSystemDownloader = true,'
+          )
+
+          # Wan 2.2 VAE also uses the system downloader.
+          marker = 'filename = "VAE/Wan2.2_VAE.safetensors",'
+          if marker in s and (
+              'filename = "VAE/Wan2.2_VAE.safetensors",\n'
+              '                        preferSystemDownloader = true,'
+          ) not in s:
+              s = s.replace(
+                  marker,
+                  marker + '\n'
+                  '                        preferSystemDownloader = true,'
+              )
+
+          form.write_text(s)
+
+          # --------------------------------------------------
+          # 3. Smartphone-friendly defaults.
+          # --------------------------------------------------
+          activity = ex / (
+              "app/src/main/java/com/example/llmedgeexample/"
+              "demo/video/VideoGenerationActivity.kt"
+          )
+          s = activity.read_text()
+          s = s.replace(
+              "private const val DEFAULT_STEPS = 30",
+              "private const val DEFAULT_STEPS = 12"
+          )
+          s = s.replace(
+              "private const val DEFAULT_CFG = 5.0f",
+              "private const val DEFAULT_CFG = 6.0f"
+          )
+
+          # Default to Wan 2.2 mobile preset when the screen opens.
+          bind_marker = """        VideoGenerationFormSupport.bindAdapters(
+              this,
+              views.modelSpinner,
+              views.samplerSpinner,
+              views.schedulerSpinner,
+          )"""
+          if bind_marker in s and "Q3_K_S (mobile)" not in s:
+              s = s.replace(
+                  bind_marker,
+                  bind_marker + """
+          val mobileWanIndex =
+              VideoGenerationFormSupport.modelPresets.indexOfFirst {
+                  it.displayName.contains("Q3_K_S (mobile)")
+              }
+          if (mobileWanIndex >= 0) {
+              views.modelSpinner.setSelection(mobileWanIndex)
+          }"""
+              )
+          activity.write_text(s)
+
+          # Visible defaults in XML.
+          layout = ex / "app/src/main/res/layout/activity_video_generation.xml"
+          s = layout.read_text()
+          s = s.replace(
+              'android:id="@+id/videoStepsInput"',
+              'android:id="@+id/videoStepsInput"',
+          )
+          # Only target exact current default strings around controls.
+          s = s.replace(
+              'android:hint="Steps (1-50)"\n'
+              '                android:inputType="number"\n'
+              '                android:text="20"',
+              'android:hint="Steps (1-50)"\n'
+              '                android:inputType="number"\n'
+              '                android:text="12"'
+          )
+          s = s.replace(
+              'android:hint="CFG (1.0-15.0)"\n'
+              '                android:inputType="numberDecimal"\n'
+              '                android:text="7.0"',
+              'android:hint="CFG (1.0-15.0)"\n'
+              '                android:inputType="numberDecimal"\n'
+              '                android:text="6.0"'
+          )
+          s = s.replace(
+              'android:progress="80"',
+              'android:progress="75"'
+          )
+          s = s.replace(
+              'android:text="0.80"',
+              'android:text="0.75"'
+          )
+          layout.write_text(s)
+
+          # --------------------------------------------------
+          # 4. Sequential loading + PREFETCH before generation.
+          # --------------------------------------------------
+          controller = ex / (
+              "app/src/main/java/com/example/llmedgeexample/"
+              "demo/video/VideoGenerationController.kt"
+          )
+          s = controller.read_text()
+          s = s.replace(
+              "forceSequentialLoad = false,",
+              "forceSequentialLoad = true,"
+          )
+
+          needle = """                    val request =
+                          VideoGenerationRequestFactory.create(
+                              config.copy(initImage = resizedInitImage),
+                          )"""
+
+          replacement = """                    // Download/cache large assets BEFORE starting
+                      // the isolated diffusion worker. This avoids the
+                      // RESOLVING_MODEL watchdog killing a slow first download.
+                      withContext(Dispatchers.Main) {
+                          callbacks.onProgress(0, "Downloading / checking model cache...")
+                      }
+                      config.model?.let { edge.models.prefetch(it) }
+                      config.vae?.let { edge.models.prefetch(it) }
+                      config.textEncoder?.let { edge.models.prefetch(it) }
+
+                      withContext(Dispatchers.Main) {
+                          callbacks.onProgress(0, "Model cache ready. Starting video...")
+                      }
+
+                      val request =
+                          VideoGenerationRequestFactory.create(
+                              config.copy(initImage = resizedInitImage),
+                          )"""
+
+          if needle not in s:
+              raise SystemExit("ERROR: request insertion point not found")
+          s = s.replace(needle, replacement, 1)
+          controller.write_text(s)
+
+          # --------------------------------------------------
+          # 5. Extend watchdog hard wall 30 -> 90 minutes.
+          # --------------------------------------------------
+          candidates = []
+          for p in (root / "llmedge/src/main/java").rglob("*.kt"):
+              t = p.read_text()
+              if "WorkerWatchdogConfig" in t and "hardWallTimeoutMs" in t:
+                  candidates.append(p)
+
+          if not candidates:
+              raise SystemExit("ERROR: WorkerWatchdogConfig source not found")
+
+          patched = False
+          for p in candidates:
+              t = p.read_text()
+              # Replace only the DEFAULT declaration.
+              new, n = re.subn(
+                  r'(hardWallTimeoutMs\s*:\s*Long\s*=\s*)'
+                  r'([^,\n\)]+)',
+                  r'\g<1>90L * 60L * 1000L',
+                  t,
+                  count=1,
+              )
+              if n:
+                  p.write_text(new)
+                  print("Patched watchdog:", p)
+                  patched = True
+                  break
+
+          if not patched:
+              raise SystemExit("ERROR: hardWallTimeoutMs default not patched")
+
+          print("I2V v8 patches complete")
+          PY
+
+          echo "===== PATCH CHECK ====="
+          grep -RniE \
+            'LLMEdge I2V v8|llmedgei2vv8|Q3_K_S \(mobile\)|preferSystemDownloader|forceSequentialLoad = true|90L \* 60L' \
+            llmedge/llmedge-examples/app/src/main \
+            llmedge/llmedge/src/main/java \
+            | head -n 80
 
       - name: Build Vulkan GPU library
         run: |
           cd llmedge
-
           rm -rf llmedge/.cxx
 
           ./gradlew :llmedge:assembleRelease \
@@ -71,7 +280,7 @@ jobs:
             --no-daemon \
             --stacktrace
 
-      - name: Build GPU APK
+      - name: Build I2V APK
         run: |
           cd llmedge/llmedge-examples
 
@@ -83,26 +292,35 @@ jobs:
 
       - name: Prepare APK
         run: |
-          echo "===== APK candidates in workspace ====="
-          find "$GITHUB_WORKSPACE" -type f -name '*.apk' -print
+          echo "===== APK candidates ====="
+          find "$GITHUB_WORKSPACE" -type f -name 'app-debug.apk' -print
 
-          APK="$(find "$GITHUB_WORKSPACE" -type f -name '*.apk' -print -quit)"
+          APK="$(find "$GITHUB_WORKSPACE" \
+            -type f \
+            -path '*/app/build/intermediates/apk/debug/app-debug.apk' \
+            -print -quit)"
 
           if [ -z "$APK" ]; then
-            echo "ERROR: APK not found anywhere in workspace"
+            echo "ERROR: app-debug.apk not found"
             exit 1
           fi
 
-          echo "Using APK: $APK"
-          cp "$APK" "$GITHUB_WORKSPACE/LLMEdge-GPU-v7.apk"
+          cp "$APK" "$GITHUB_WORKSPACE/LLMEdge-I2V-v8.apk"
 
-          ls -lh "$GITHUB_WORKSPACE/LLMEdge-GPU-v7.apk"
-          sha256sum "$GITHUB_WORKSPACE/LLMEdge-GPU-v7.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" \
+            verify --verbose "$GITHUB_WORKSPACE/LLMEdge-I2V-v8.apk"
+
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" \
+            dump badging "$GITHUB_WORKSPACE/LLMEdge-I2V-v8.apk" \
+            | grep -E '^package:|^application-label:|^native-code:'
+
+          ls -lh "$GITHUB_WORKSPACE/LLMEdge-I2V-v8.apk"
+          sha256sum "$GITHUB_WORKSPACE/LLMEdge-I2V-v8.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: LLMEdge-GPU-v7
-          path: LLMEdge-GPU-v7.apk
+          name: LLMEdge-I2V-v8
+          path: LLMEdge-I2V-v8.apk
           retention-days: 7
           if-no-files-found: error
