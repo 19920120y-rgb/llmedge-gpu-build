@@ -55,6 +55,10 @@ jobs:
 
           grep 'applicationId' app/build.gradle.kts
 
+          sed -i 's#<string name="app_name">llmedge Example</string>#<string name="app_name">LLMEdge GPU v7</string>#'             app/src/main/res/values/strings.xml
+
+          grep 'app_name' app/src/main/res/values/strings.xml
+
       - name: Build Vulkan GPU library
         run: |
           cd llmedge
@@ -79,18 +83,26 @@ jobs:
 
       - name: Prepare APK
         run: |
-          APK="llmedge/llmedge-examples/app/build/outputs/apk/debug/app-debug.apk"
+          echo "===== APK candidates ====="
+          find llmedge/llmedge-examples/app/build/outputs/apk -type f -name '*.apk' -print
 
-          test -f "$APK"
-          cp "$APK" LLMEdge-GPU-v6.apk
+          APK="$(find llmedge/llmedge-examples/app/build/outputs/apk -type f -name '*.apk' | head -n 1)"
 
-          ls -lh LLMEdge-GPU-v6.apk
-          sha256sum LLMEdge-GPU-v6.apk
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK not found"
+            exit 1
+          fi
+
+          echo "Using APK: $APK"
+          cp "$APK" LLMEdge-GPU-v7.apk
+
+          ls -lh LLMEdge-GPU-v7.apk
+          sha256sum LLMEdge-GPU-v7.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: LLMEdge-GPU-v6
-          path: LLMEdge-GPU-v6.apk
+          name: LLMEdge-GPU-v7
+          path: LLMEdge-GPU-v7.apk
           retention-days: 7
           if-no-files-found: error
