@@ -287,7 +287,10 @@ jobs:
         run: |
           cd llmedge/llmedge-examples
 
+          echo "android.injected.testOnly=false" >> gradle.properties
+
           ./gradlew :app:assembleDebug \
+            -Pandroid.injected.testOnly=false \
             -Pandroid.injected.build.api=30 \
             -Pandroid.jniCmakeArgs="-DGGML_VULKAN=ON -DSD_VULKAN=ON" \
             --no-daemon \
@@ -298,14 +301,26 @@ jobs:
           echo "===== APK candidates ====="
           find "$GITHUB_WORKSPACE" -type f -name 'app-debug.apk' -print
 
-          APK="$GITHUB_WORKSPACE/llmedge/llmedge-examples/app/build/outputs/apk/debug/app-debug.apk"
+          APK="$GITHUB_WORKSPACE/llmedge/llmedge-examples/app/build/intermediates/apk/debug/app-debug.apk"
 
-          if [ -z "$APK" ]; then
+          if [ ! -f "$APK" ]; then
             echo "ERROR: final outputs/app-debug.apk not found"
             exit 1
           fi
 
           cp "$APK" "$GITHUB_WORKSPACE/LLMEdge-I2V-v8.apk"
+
+          echo "===== TESTONLY CHECK ====="
+          TESTONLY="$("$ANDROID_HOME/build-tools/35.0.0/aapt"             dump xmltree "$GITHUB_WORKSPACE/LLMEdge-I2V-v8.apk" AndroidManifest.xml             | grep -i 'android:testOnly' || true)"
+
+          echo "$TESTONLY"
+
+          if echo "$TESTONLY" | grep -q '0xffffffff'; then
+            echo "ERROR: APK is still testOnly=true"
+            exit 1
+          fi
+
+          echo "APK is installable: testOnly is false/absent"
 
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" \
             verify --verbose "$GITHUB_WORKSPACE/LLMEdge-I2V-v8.apk"
