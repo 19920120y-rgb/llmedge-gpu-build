@@ -298,13 +298,10 @@ jobs:
           echo "===== APK candidates ====="
           find "$GITHUB_WORKSPACE" -type f -name 'app-debug.apk' -print
 
-          APK="$(find "$GITHUB_WORKSPACE" \
-            -type f \
-            -path '*/app/build/intermediates/apk/debug/app-debug.apk' \
-            -print -quit)"
+          APK="$GITHUB_WORKSPACE/llmedge/llmedge-examples/app/build/outputs/apk/debug/app-debug.apk"
 
           if [ -z "$APK" ]; then
-            echo "ERROR: app-debug.apk not found"
+            echo "ERROR: final outputs/app-debug.apk not found"
             exit 1
           fi
 
