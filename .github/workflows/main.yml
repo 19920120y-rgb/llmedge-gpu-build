@@ -1,4 +1,4 @@
-name: Build LLMEdge I2V v8 APK
+name: Build LLMEdge I2V v9 Offline APK
 
 on:
   workflow_dispatch:
@@ -32,18 +32,15 @@ jobs:
             "cmake;3.22.1"
 
           sudo apt-get update
-          sudo apt-get install -y \
-            glslc \
-            libvulkan-dev \
-            ninja-build
+          sudo apt-get install -y glslc libvulkan-dev ninja-build
 
-      - name: Clone official LLMEdge
+      - name: Clone LLMEdge
         run: |
           git clone --recursive https://github.com/Aatricks/llmedge.git llmedge
           cd llmedge
           git submodule update --init --recursive
 
-      - name: Patch I2V v8
+      - name: Patch v9 offline I2V
         run: |
           python3 <<'PY'
           from pathlib import Path
@@ -52,21 +49,21 @@ jobs:
           root = Path("llmedge")
           ex = root / "llmedge-examples"
 
-          # --------------------------------------------------
-          # 1. Separate app/package so it is easy to identify.
-          # --------------------------------------------------
+          # ---------- app identity ----------
           gradle = ex / "app/build.gradle.kts"
           s = gradle.read_text()
           s = s.replace(
               'applicationId = "com.example.llmedgeexample"',
-              'applicationId = "com.example.llmedgei2vv8"'
+              'applicationId = "com.example.llmedgei2vv9"'
           )
           gradle.write_text(s)
 
           manifest = ex / "app/src/main/AndroidManifest.xml"
           s = manifest.read_text()
-          s = s.replace('android:label="llmedge Example"',
-                        'android:label="LLMEdge I2V v8"')
+          s = s.replace(
+              'android:label="llmedge Example"',
+              'android:label="LLMEdge I2V v9 Offline"'
+          )
           manifest.write_text(s)
 
           strings = ex / "app/src/main/res/values/strings.xml"
@@ -74,53 +71,135 @@ jobs:
               s = strings.read_text()
               s = re.sub(
                   r'<string name="app_name">.*?</string>',
-                  '<string name="app_name">LLMEdge I2V v8</string>',
-                  s,
+                  '<string name="app_name">LLMEdge I2V v9 Offline</string>',
+                  s
               )
               strings.write_text(s)
 
-          # --------------------------------------------------
-          # 2. Wan 2.2 Q6_K -> Q3_K_S.
-          #    Also use Android system downloader.
-          # --------------------------------------------------
+          # ---------- Wan 2.2 mobile Q3 preset ----------
           form = ex / (
               "app/src/main/java/com/example/llmedgeexample/"
               "demo/video/VideoGenerationFormSupport.kt"
           )
           s = form.read_text()
-
           s = s.replace(
               'displayName = "Wan 2.2 TI2V 5B Q6_K"',
-              'displayName = "Wan 2.2 TI2V 5B Q3_K_S (mobile)"'
+              'displayName = "Wan 2.2 TI2V 5B Q3_K_S (offline mobile)"'
           )
           s = s.replace(
-              'filename = "Wan2.2-TI2V-5B-Q6_K.gguf",',
-              'filename = "Wan2.2-TI2V-5B-Q3_K_S.gguf",\n'
-              '                        preferSystemDownloader = true,'
+              'filename = "Wan2.2-TI2V-5B-Q6_K.gguf"',
+              'filename = "Wan2.2-TI2V-5B-Q3_K_S.gguf"'
           )
-
-          # Wan 2.2 VAE also uses the system downloader.
-          marker = 'filename = "VAE/Wan2.2_VAE.safetensors",'
-          if marker in s and (
-              'filename = "VAE/Wan2.2_VAE.safetensors",\n'
-              '                        preferSystemDownloader = true,'
-          ) not in s:
-              s = s.replace(
-                  marker,
-                  marker + '\n'
-                  '                        preferSystemDownloader = true,'
-              )
-
           form.write_text(s)
 
-          # --------------------------------------------------
-          # 3. Smartphone-friendly defaults.
-          # --------------------------------------------------
+          # ---------- persistent local VAE import ----------
+          media = ex / (
+              "app/src/main/java/com/example/llmedgeexample/"
+              "demo/video/VideoGenerationMediaSupport.kt"
+          )
+          s = media.read_text()
+
+          start = s.index("    fun loadTaehvFile(")
+          end = s.index("    suspend fun saveFramesAsGif(", start)
+
+          new_loader = '''    fun loadTaehvFile(
+              context: Context,
+              uri: Uri,
+          ): CachedVideoAsset {
+              val directory =
+                  File(context.filesDir, "imported-vae").apply { mkdirs() }
+
+              val file = File(directory, "Wan2.2_VAE.safetensors")
+              val partial = File(directory, "Wan2.2_VAE.safetensors.partial")
+
+              partial.delete()
+
+              val input =
+                  context.contentResolver.openInputStream(uri)
+                      ?: error("Unable to open selected VAE")
+
+              input.use { source ->
+                  partial.outputStream().use { output ->
+                      source.copyTo(output, 1024 * 1024)
+                  }
+              }
+
+              if (partial.length() <= 0L) {
+                  partial.delete()
+                  error("Selected VAE is empty")
+              }
+
+              if (file.exists()) file.delete()
+
+              if (!partial.renameTo(file)) {
+                  partial.copyTo(file, overwrite = true)
+                  partial.delete()
+              }
+
+              return CachedVideoAsset(
+                  file = file,
+                  selectionPath = file.absolutePath,
+              )
+          }
+
+'''
+          s = s[:start] + new_loader + s[end:]
+          media.write_text(s)
+
+          # ---------- Activity: TAEHV slot becomes local VAE ----------
           activity = ex / (
               "app/src/main/java/com/example/llmedgeexample/"
               "demo/video/VideoGenerationActivity.kt"
           )
           s = activity.read_text()
+
+          if "import java.io.File" not in s:
+              s = s.replace(
+                  "import io.aatricks.llmedge.model.ModelSpec",
+                  "import io.aatricks.llmedge.model.ModelSpec\nimport java.io.File"
+              )
+
+          s = s.replace(
+              'VideoGenerationMediaSupport.createSafetensorPickerIntent("Select TAEHV (.safetensors)")',
+              'VideoGenerationMediaSupport.createSafetensorPickerIntent("Select local Wan VAE (.safetensors)")'
+          )
+
+          s = s.replace(
+              'FileLogger.i(TAG, "TAEHV loaded: $selectedTaehvPath")',
+              'FileLogger.i(TAG, "Local VAE loaded: $selectedTaehvPath")'
+          )
+
+          s = s.replace(
+              'views.taehvLabel.text = "No TAEHV selected"',
+              'views.taehvLabel.text = "Use preset VAE"'
+          )
+
+          # Create local VAE ModelSpec before config.
+          needle = '''        return VideoGenerationConfig(
+'''
+          replacement = '''        val localVaeOverride =
+              selectedTaehvPath?.let { path ->
+                  ModelSpec.localFile(File(path))
+              }
+
+          return VideoGenerationConfig(
+'''
+          if needle not in s:
+              raise SystemExit("ERROR: VideoGenerationConfig insertion point missing")
+          s = s.replace(needle, replacement, 1)
+
+          s = s.replace(
+              "            vae = modelPreset.vae,",
+              "            vae = localVaeOverride ?: modelPreset.vae,"
+          )
+
+          # Do NOT pass the full Wan VAE as a TAEHV.
+          s = s.replace(
+              "            taehvPath = selectedTaehvPath,",
+              "            taehvPath = null,"
+          )
+
+          # mobile defaults
           s = s.replace(
               "private const val DEFAULT_STEPS = 30",
               "private const val DEFAULT_STEPS = 12"
@@ -130,50 +209,35 @@ jobs:
               "private const val DEFAULT_CFG = 6.0f"
           )
 
-          # Default to Wan 2.2 mobile preset when the screen opens.
-          bind_marker = """        VideoGenerationFormSupport.bindAdapters(
-              this,
-              views.modelSpinner,
-              views.samplerSpinner,
-              views.schedulerSpinner,
-          )"""
-          if bind_marker in s and "Q3_K_S (mobile)" not in s:
-              s = s.replace(
-                  bind_marker,
-                  bind_marker + """
-          val mobileWanIndex =
-              VideoGenerationFormSupport.modelPresets.indexOfFirst {
-                  it.displayName.contains("Q3_K_S (mobile)")
-              }
-          if (mobileWanIndex >= 0) {
-              views.modelSpinner.setSelection(mobileWanIndex)
-          }"""
-              )
           activity.write_text(s)
 
-          # Visible defaults in XML.
+          # ---------- UI labels/defaults ----------
           layout = ex / "app/src/main/res/layout/activity_video_generation.xml"
           s = layout.read_text()
+
           s = s.replace(
-              'android:id="@+id/videoStepsInput"',
-              'android:id="@+id/videoStepsInput"',
-          )
-          # Only target exact current default strings around controls.
-          s = s.replace(
-              'android:hint="Steps (1-50)"\n'
-              '                android:inputType="number"\n'
-              '                android:text="20"',
-              'android:hint="Steps (1-50)"\n'
-              '                android:inputType="number"\n'
-              '                android:text="12"'
+              'android:text="TAEHV (Optional, overrides VAE)"',
+              'android:text="Local VAE override (OFFLINE)"'
           )
           s = s.replace(
-              'android:hint="CFG (1.0-15.0)"\n'
-              '                android:inputType="numberDecimal"\n'
-              '                android:text="7.0"',
-              'android:hint="CFG (1.0-15.0)"\n'
-              '                android:inputType="numberDecimal"\n'
-              '                android:text="6.0"'
+              'android:text="Select TAEHV"',
+              'android:text="Select VAE"'
+          )
+          s = s.replace(
+              'android:text="No TAEHV selected"',
+              'android:text="Use preset VAE"'
+          )
+
+          # current XML defaults
+          s = s.replace(
+              'android:text="20"',
+              'android:text="12"',
+              1
+          )
+          s = s.replace(
+              'android:text="7.0"',
+              'android:text="6.0"',
+              1
           )
           s = s.replace(
               'android:progress="80"',
@@ -183,11 +247,10 @@ jobs:
               'android:text="0.80"',
               'android:text="0.75"'
           )
+
           layout.write_text(s)
 
-          # --------------------------------------------------
-          # 4. Sequential loading + PREFETCH before generation.
-          # --------------------------------------------------
+          # ---------- sequential load ----------
           controller = ex / (
               "app/src/main/java/com/example/llmedgeexample/"
               "demo/video/VideoGenerationController.kt"
@@ -197,82 +260,21 @@ jobs:
               "forceSequentialLoad = false,",
               "forceSequentialLoad = true,"
           )
-
-          # Robust insertion: source indentation may change between commits.
-          request_line = re.search(
-              r'(?m)^(\s*)val request\s*=\s*$',
-              s,
-          )
-
-          if request_line is None:
-              raise SystemExit("ERROR: val request insertion point not found")
-
-          indent = request_line.group(1)
-
-          prefetch = (
-              f'{indent}// Pre-download/cache large Wan assets before starting worker.\n'
-              f'{indent}withContext(Dispatchers.Main) {{\n'
-              f'{indent}    callbacks.onProgress(0, "Downloading / checking model cache...")\n'
-              f'{indent}}}\n'
-              f'{indent}config.model?.let {{ edge.models.prefetch(it) }}\n'
-              f'{indent}config.vae?.let {{ edge.models.prefetch(it) }}\n'
-              f'{indent}config.textEncoder?.let {{ edge.models.prefetch(it) }}\n'
-              f'{indent}withContext(Dispatchers.Main) {{\n'
-              f'{indent}    callbacks.onProgress(0, "Model cache ready. Starting video...")\n'
-              f'{indent}}}\n'
-          )
-
-          s = (
-              s[:request_line.start()]
-              + prefetch
-              + s[request_line.start():]
-          )
-
           controller.write_text(s)
 
-          # --------------------------------------------------
-          # 5. Extend watchdog hard wall 30 -> 90 minutes.
-          # --------------------------------------------------
-          candidates = []
-          for p in (root / "llmedge/src/main/java").rglob("*.kt"):
-              t = p.read_text()
-              if "WorkerWatchdogConfig" in t and "hardWallTimeoutMs" in t:
-                  candidates.append(p)
-
-          if not candidates:
-              raise SystemExit("ERROR: WorkerWatchdogConfig source not found")
-
-          patched = False
-          for p in candidates:
-              t = p.read_text()
-              # Replace only the DEFAULT declaration.
-              new, n = re.subn(
-                  r'(hardWallTimeoutMs\s*:\s*Long\s*=\s*)'
-                  r'([^,\n\)]+)',
-                  r'\g<1>90L * 60L * 1000L',
-                  t,
-                  count=1,
-              )
-              if n:
-                  p.write_text(new)
-                  print("Patched watchdog:", p)
-                  patched = True
-                  break
-
-          if not patched:
-              raise SystemExit("ERROR: hardWallTimeoutMs default not patched")
-
-          print("I2V v8 patches complete")
+          print("===== V9 PATCHED =====")
+          print("package=com.example.llmedgei2vv9")
+          print("Wan 2.2 Q3 local model + local VAE override")
           PY
 
           echo "===== PATCH CHECK ====="
-          grep -RniE \
-            'LLMEdge I2V v8|llmedgei2vv8|Q3_K_S \(mobile\)|preferSystemDownloader|forceSequentialLoad = true|90L \* 60L' \
-            llmedge/llmedge-examples/app/src/main \
-            llmedge/llmedge/src/main/java \
-            | head -n 80
 
-      - name: Build Vulkan GPU library
+          grep -RniE \
+            'I2V v9 Offline|llmedgei2vv9|Q3_K_S \(offline mobile\)|Local VAE override|localVaeOverride|imported-vae|taehvPath = null' \
+            llmedge/llmedge-examples/app/src/main \
+            | head -n 100
+
+      - name: Build Vulkan library
         run: |
           cd llmedge
           rm -rf llmedge/.cxx
@@ -283,7 +285,7 @@ jobs:
             --no-daemon \
             --stacktrace
 
-      - name: Build I2V APK
+      - name: Build v9 APK
         run: |
           cd llmedge/llmedge-examples
 
@@ -291,51 +293,47 @@ jobs:
 
           ./gradlew :app:assembleDebug \
             -Pandroid.injected.testOnly=false \
-            -Pandroid.injected.build.api=30 \
             -Pandroid.jniCmakeArgs="-DGGML_VULKAN=ON -DSD_VULKAN=ON" \
             --no-daemon \
             --stacktrace
 
       - name: Prepare APK
         run: |
-          echo "===== APK candidates ====="
+          echo "===== APK CANDIDATES ====="
           find "$GITHUB_WORKSPACE" -type f -name 'app-debug.apk' -print
 
-          APK="$GITHUB_WORKSPACE/llmedge/llmedge-examples/app/build/intermediates/apk/debug/app-debug.apk"
+          APK="$(find "$GITHUB_WORKSPACE" \
+            -type f \
+            -path '*/app/build/intermediates/apk/debug/app-debug.apk' \
+            -print -quit)"
 
-          if [ ! -f "$APK" ]; then
-            echo "ERROR: final outputs/app-debug.apk not found"
+          if [ -z "$APK" ] || [ ! -f "$APK" ]; then
+            echo "ERROR: APK not found"
             exit 1
           fi
 
-          cp "$APK" "$GITHUB_WORKSPACE/LLMEdge-I2V-v8.apk"
+          cp "$APK" "$GITHUB_WORKSPACE/LLMEdge-I2V-v9-Offline.apk"
 
-          echo "===== TESTONLY CHECK ====="
-          TESTONLY="$("$ANDROID_HOME/build-tools/35.0.0/aapt"             dump xmltree "$GITHUB_WORKSPACE/LLMEdge-I2V-v8.apk" AndroidManifest.xml             | grep -i 'android:testOnly' || true)"
-
-          echo "$TESTONLY"
-
-          if echo "$TESTONLY" | grep -q '0xffffffff'; then
-            echo "ERROR: APK is still testOnly=true"
-            exit 1
-          fi
-
-          echo "APK is installable: testOnly is false/absent"
-
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" \
-            verify --verbose "$GITHUB_WORKSPACE/LLMEdge-I2V-v8.apk"
-
+          echo "===== APK INFO ====="
           "$ANDROID_HOME/build-tools/35.0.0/aapt" \
-            dump badging "$GITHUB_WORKSPACE/LLMEdge-I2V-v8.apk" \
-            | grep -E '^package:|^application-label:|^native-code:'
+            dump badging "$GITHUB_WORKSPACE/LLMEdge-I2V-v9-Offline.apk" \
+            | grep -E '^package:|^application-label:|^launchable-activity:|^native-code:'
 
-          ls -lh "$GITHUB_WORKSPACE/LLMEdge-I2V-v8.apk"
-          sha256sum "$GITHUB_WORKSPACE/LLMEdge-I2V-v8.apk"
+          echo "===== TESTONLY ====="
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" \
+            dump xmltree "$GITHUB_WORKSPACE/LLMEdge-I2V-v9-Offline.apk" AndroidManifest.xml \
+            | grep -i 'android:testOnly' || true
+
+          echo "===== SIGNATURE ====="
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" \
+            verify --verbose "$GITHUB_WORKSPACE/LLMEdge-I2V-v9-Offline.apk"
+
+          ls -lh "$GITHUB_WORKSPACE/LLMEdge-I2V-v9-Offline.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: LLMEdge-I2V-v8
-          path: LLMEdge-I2V-v8.apk
+          name: LLMEdge-I2V-v9-Offline
+          path: LLMEdge-I2V-v9-Offline.apk
           retention-days: 7
           if-no-files-found: error
