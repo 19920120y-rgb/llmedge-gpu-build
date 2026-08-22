@@ -145,7 +145,7 @@ jobs:
               )
           }
 
-'''
+          '''
           s = s[:start] + new_loader + s[end:]
           media.write_text(s)
 
@@ -179,14 +179,14 @@ jobs:
 
           # Create local VAE ModelSpec before config.
           needle = '''        return VideoGenerationConfig(
-'''
+          '''
           replacement = '''        val localVaeOverride =
               selectedTaehvPath?.let { path ->
                   ModelSpec.localFile(File(path))
               }
 
           return VideoGenerationConfig(
-'''
+          '''
           if needle not in s:
               raise SystemExit("ERROR: VideoGenerationConfig insertion point missing")
           s = s.replace(needle, replacement, 1)
