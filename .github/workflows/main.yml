@@ -1,4 +1,4 @@
-name: Build LLMEdge I2V v13 LowRAM APK
+name: Build LLMEdge I2V v14 InProcess APK
 
 on:
   workflow_dispatch:
@@ -65,6 +65,10 @@ jobs:
         run: |
           python3 "$GITHUB_WORKSPACE/.github/scripts/patch_v13.py"
 
+      - name: Patch v14 InProcess
+        run: |
+          python3 "$GITHUB_WORKSPACE/.github/scripts/patch_v14.py"
+
       - name: Build Vulkan library
         run: |
           cd llmedge
@@ -76,7 +80,7 @@ jobs:
             --no-daemon \
             --stacktrace
 
-      - name: Build v13 APK
+      - name: Build v14 APK
         run: |
           cd llmedge/llmedge-examples
 
@@ -98,27 +102,27 @@ jobs:
             exit 1
           fi
 
-          cp "$APK" "$GITHUB_WORKSPACE/LLMEdge-I2V-v13-LowRAM.apk"
+          cp "$APK" "$GITHUB_WORKSPACE/LLMEdge-I2V-v14-InProcess.apk"
 
           echo "===== APK INFO ====="
 
           "$ANDROID_HOME/build-tools/35.0.0/aapt" \
-            dump badging "$GITHUB_WORKSPACE/LLMEdge-I2V-v13-LowRAM.apk" \
+            dump badging "$GITHUB_WORKSPACE/LLMEdge-I2V-v14-InProcess.apk" \
             | grep -E '^package:|^application-label:|^launchable-activity:|^native-code:'
 
           echo "===== TESTONLY ====="
 
           "$ANDROID_HOME/build-tools/35.0.0/aapt" \
-            dump xmltree "$GITHUB_WORKSPACE/LLMEdge-I2V-v13-LowRAM.apk" AndroidManifest.xml \
+            dump xmltree "$GITHUB_WORKSPACE/LLMEdge-I2V-v14-InProcess.apk" AndroidManifest.xml \
             | grep -i android:testOnly \
             || echo "testOnly ABSENT = OK"
 
-          ls -lh "$GITHUB_WORKSPACE/LLMEdge-I2V-v13-LowRAM.apk"
+          ls -lh "$GITHUB_WORKSPACE/LLMEdge-I2V-v14-InProcess.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: LLMEdge-I2V-v13-LowRAM
-          path: LLMEdge-I2V-v13-LowRAM.apk
+          name: LLMEdge-I2V-v14-InProcess
+          path: LLMEdge-I2V-v14-InProcess.apk
           retention-days: 7
           if-no-files-found: error
