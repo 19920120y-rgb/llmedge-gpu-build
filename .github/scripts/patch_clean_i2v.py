@@ -327,6 +327,28 @@ for forbidden in [
     if forbidden in final:
         raise SystemExit("ERROR OLD PATCH REMAINS: " + forbidden)
 
+
+# GGUF SUMMARY JNI BYPASS
+support = ex / (
+    "app/src/main/java/com/example/llmedgeexample/"
+    "common/ImportedModelSupport.kt"
+)
+
+u = support.read_text()
+
+old = "            summary = GgufFileSummary.read(partialFile)"
+new = """            // GGUF magic is already validated above.
+            // Skip diagnostic GGUFReader JNI parsing during large model import.
+            summary = null"""
+
+if old not in u:
+    raise SystemExit("ERROR: GGUF SUMMARY LINE NOT FOUND")
+
+u = u.replace(old, new, 1)
+support.write_text(u)
+
+print("GGUF JNI summary bypass = OK")
+
 print("===== CLEAN PATCH VERIFIED =====")
 print("Official TAEHV preserved")
 print("Local GGUF + Local T5 + TAEHV")

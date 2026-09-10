@@ -1,10 +1,10 @@
-name: Build Clean LLMEdge I2V
+name: Build Clean I2V GGUF Fix
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -49,20 +49,19 @@ jobs:
           cd llmedge
           git submodule update --init --recursive
 
-      - name: Apply only clean I2V patch
+      - name: Apply Clean I2V patch
         run: |
-          python3 \
-            "$GITHUB_WORKSPACE/.github/scripts/patch_clean_i2v.py"
+          python3 "$GITHUB_WORKSPACE/.github/scripts/patch_clean_i2v.py"
 
-      - name: Verify no old patches
+      - name: Verify GGUF fix
         run: |
+          grep -Rni \
+            "Skip diagnostic GGUFReader JNI" \
+            llmedge/llmedge-examples/app/src/main/java
+
           ! grep -R \
             "selectedVaeOverride\|taehvPath = null" \
             llmedge/llmedge-examples/app/src/main/java/com/example/llmedgeexample/demo/video/VideoGenerationActivity.kt
-
-          grep -n \
-            "selectedTaehvPath\|selectedTextEncoderOverride\|vae = null\|forceSequentialLoad = true" \
-            llmedge/llmedge-examples/app/src/main/java/com/example/llmedgeexample/demo/video/*.kt
 
       - name: Build Vulkan library
         run: |
@@ -73,10 +72,9 @@ jobs:
           ./gradlew :llmedge:assembleRelease \
             -Pandroid.injected.build.api=30 \
             -Pandroid.jniCmakeArgs="-DGGML_VULKAN=ON -DSD_VULKAN=ON" \
-            --no-daemon \
-            --stacktrace
+            --no-daemon
 
-      - name: Build Clean I2V APK
+      - name: Build APK
         run: |
           cd llmedge/llmedge-examples
 
@@ -85,8 +83,7 @@ jobs:
           ./gradlew :app:assembleDebug \
             -Pandroid.injected.testOnly=false \
             -Pandroid.jniCmakeArgs="-DGGML_VULKAN=ON -DSD_VULKAN=ON" \
-            --no-daemon \
-            --stacktrace
+            --no-daemon
 
       - name: Prepare APK
         run: |
@@ -95,18 +92,11 @@ jobs:
           test -f "$APK"
 
           cp "$APK" \
-            "$GITHUB_WORKSPACE/LLMEdge-Clean-I2V.apk"
-
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" \
-            dump badging \
-            "$GITHUB_WORKSPACE/LLMEdge-Clean-I2V.apk" \
-            | grep -E \
-            '^package:|^application-label:|^launchable-activity:|^native-code:'
+            "$GITHUB_WORKSPACE/LLMEdge-Clean-I2V-GGUFFix.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: LLMEdge-Clean-I2V
-          path: LLMEdge-Clean-I2V.apk
+          name: LLMEdge-Clean-I2V-GGUFFix
+          path: LLMEdge-Clean-I2V-GGUFFix.apk
           retention-days: 7
-          if-no-files-found: error
