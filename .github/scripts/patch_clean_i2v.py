@@ -349,6 +349,33 @@ support.write_text(u)
 
 print("GGUF JNI summary bypass = OK")
 
+
+# LOW RAM VIDEO BUDGET FIX
+planner = root / (
+    "llmedge/src/main/java/io/aatricks/llmedge/image/"
+    "VideoExecutionPlanner.kt"
+)
+
+v = planner.read_text()
+
+old = """private fun safeBudgetBytes(memory: VideoMemorySnapshot): Long {
+        val reserve = max(MIN_DEVICE_RESERVE_BYTES, memory.totalSystemBytes.coerceAtLeast(0L) / 8L)
+        return (memory.availableSystemBytes - memory.lowMemoryThresholdBytes - reserve).coerceAtLeast(0L)
+    }"""
+
+new = """private fun safeBudgetBytes(memory: VideoMemorySnapshot): Long {
+        val reserve = MIN_DEVICE_RESERVE_BYTES
+        return (memory.availableSystemBytes - reserve).coerceAtLeast(0L)
+    }"""
+
+if old not in v:
+    raise SystemExit("ERROR: Video memory budget block not found")
+
+v = v.replace(old, new, 1)
+planner.write_text(v)
+
+print("LOW RAM VIDEO BUDGET = OK")
+
 print("===== CLEAN PATCH VERIFIED =====")
 print("Official TAEHV preserved")
 print("Local GGUF + Local T5 + TAEHV")
