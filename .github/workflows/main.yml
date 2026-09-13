@@ -49,6 +49,14 @@ jobs:
           cd llmedge
           git submodule update --init --recursive
 
+      - name: Update stable-diffusion.cpp for Wan 5D GGUF
+        run: |
+          cd llmedge/stable-diffusion.cpp
+          git fetch origin master
+          git checkout origin/master
+          git submodule update --init --recursive
+          echo "SDCPP_COMMIT=$(git rev-parse --short HEAD)"
+
       - name: Apply Clean I2V patch
         run: |
           python3 "$GITHUB_WORKSPACE/.github/scripts/patch_clean_i2v.py"
