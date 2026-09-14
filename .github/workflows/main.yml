@@ -42,227 +42,69 @@ jobs:
 
       - name: Clone fresh official LLMEdge
         run: |
-          set -euxo pipefail
-
-          rm -rf llmedge llmedge-examples
-
-          git clone \
-            --depth 1 \
-            --recurse-submodules \
+          git clone --recursive \
             https://github.com/Aatricks/llmedge.git \
             llmedge
 
-          git -C llmedge submodule sync --recursive
-          git -C llmedge submodule update --init --recursive
+          cd llmedge
+          git submodule update --init --recursive
 
-          rm -rf llmedge/llmedge-examples
-
-          git clone \
-            --depth 1 \
-            https://github.com/Aatricks/llmedge-examples.git \
-            llmedge/llmedge-examples
-
-          # 既存パッチスクリプト互換用
-          ln -sfn \
-            "$GITHUB_WORKSPACE/llmedge/llmedge-examples" \
-            "$GITHUB_WORKSPACE/llmedge-examples"
-
-          echo "===== LLMEDGE ====="
-          git -C llmedge rev-parse HEAD
-
-          echo "===== EXAMPLES ====="
-          git -C llmedge/llmedge-examples rev-parse HEAD
       - name: Update stable-diffusion.cpp for Wan 5D GGUF
         run: |
-          set -euxo pipefail
+          cd llmedge/stable-diffusion.cpp
+          git fetch origin master
+          git checkout origin/master
+          git submodule update --init --recursive
+          echo "SDCPP_COMMIT=$(git rev-parse --short HEAD)"
 
-          SD="$GITHUB_WORKSPACE/llmedge/stable-diffusion.cpp"
-          READER="$SD/src/model_io/gguf_reader_ext.h"
-
-          test -d "$SD"
-
-          echo "===== PINNED SDCPP ====="
-          git -C "$SD" rev-parse HEAD
-          git -C "$SD" remote -v
-
-          # 現在のLLMEdgeが既にWan5D対応なら、その互換commitを優先
-          if ! grep -Fq \
-            'info.shape[GGML_MAX_DIMS - 1] *= info.shape[i]' \
-            "$READER"
-          then
-            echo "===== PINNED SDCPP IS TOO OLD ====="
-
-            git -C "$SD" fetch \
-              --depth 1 \
-              https://github.com/leejet/stable-diffusion.cpp.git \
-              master
-
-            git -C "$SD" checkout --detach FETCH_HEAD
-
-            git -C "$SD" submodule sync --recursive
-            git -C "$SD" submodule update \
-              --init \
-              --recursive \
-              --depth 1
-          fi
-
-          echo "===== ACTIVE SDCPP ====="
-          git -C "$SD" rev-parse HEAD
-
-          # Wan GGUFの5D読込コードが無ければビルドを止める
-          grep -F \
-            'info.shape[GGML_MAX_DIMS - 1] *= info.shape[i]' \
-            "$SD/src/model_io/gguf_reader_ext.h"
-
-          grep -F \
-            'info.shape.resize(GGML_MAX_DIMS)' \
-            "$SD/src/model_io/gguf_reader_ext.h"
-
-          # 実際のAPKにこのソースが入ったか後で検査するための印
-          SRC="$SD/src/stable-diffusion.cpp"
-
-          if [ ! -f "$SRC" ]; then
-            SRC="$(find "$SD" -maxdepth 3 \
-              -type f \
-              -name 'stable-diffusion.cpp' \
-              -print -quit)"
-          fi
-
-          test -n "$SRC"
-          test -f "$SRC"
-
-          if ! grep -Fq 'WAN5D_HARD_20260914' "$SRC"; then
-            cat >> "$SRC" <<'CPP'
-
-      extern "C"
-      __attribute__((used, visibility("default")))
-      const char* llmedge_wan5d_backend_marker() {
-          return "WAN5D_HARD_20260914";
-      }
-      CPP
-          fi
-
-          echo "===== WAN5D SOURCE READY ====="
       - name: Apply Clean I2V patch
         run: |
           python3 "$GITHUB_WORKSPACE/.github/scripts/patch_clean_i2v.py"
 
       - name: Verify GGUF fix
         run: |
-          set -euxo pipefail
+          grep -Rni \
+            "Skip diagnostic GGUFReader JNI" \
+            llmedge/llmedge-examples/app/src/main/java
 
-          SD="$GITHUB_WORKSPACE/llmedge/stable-diffusion.cpp"
+          ! grep -R \
+            "selectedVaeOverride\|taehvPath = null" \
+            llmedge/llmedge-examples/app/src/main/java/com/example/llmedgeexample/demo/video/VideoGenerationActivity.kt
 
-          echo "===== VERIFY 5D READER ====="
-
-          grep -F \
-            'info.shape[GGML_MAX_DIMS - 1] *= info.shape[i]' \
-            "$SD/src/model_io/gguf_reader_ext.h"
-
-          grep -F \
-            'WAN5D_HARD_20260914' \
-            "$SD/src/stable-diffusion.cpp"
-
-          echo "===== VERIFY LOCAL LIBRARY SUBSTITUTION ====="
-
-          grep -F \
-            'includeBuild("..")' \
-            "$GITHUB_WORKSPACE/llmedge/llmedge-examples/settings.gradle.kts"
-
-          echo "===== VERIFIED ====="
       - name: Build Vulkan library
         run: |
-          set -euxo pipefail
+          cd llmedge
 
-          cd "$GITHUB_WORKSPACE/llmedge"
+          rm -rf llmedge/.cxx
 
-          rm -rf \
-            llmedge/.cxx \
-            llmedge/build \
-            .gradle
-
-          chmod +x ./gradlew
-
-          ./gradlew \
-            :llmedge:assembleRelease \
-            --no-build-cache \
-            --rerun-tasks \
+          ./gradlew :llmedge:assembleRelease \
             -Pandroid.injected.build.api=30 \
-            -Pandroid.jniCmakeArgs="-DGGML_VULKAN=ON -DSD_VULKAN=ON"
+            -Pandroid.jniCmakeArgs="-DGGML_VULKAN=ON -DSD_VULKAN=ON" \
+            --no-daemon
+
       - name: Build APK
         run: |
-          set -euxo pipefail
+          cd llmedge/llmedge-examples
 
-          cd "$GITHUB_WORKSPACE/llmedge/llmedge-examples"
+          echo "android.injected.testOnly=false" >> gradle.properties
 
-          rm -rf \
-            app/build \
-            .gradle
+          ./gradlew :app:assembleDebug \
+            -Pandroid.injected.testOnly=false \
+            -Pandroid.jniCmakeArgs="-DGGML_VULKAN=ON -DSD_VULKAN=ON" \
+            --no-daemon
 
-          chmod +x ./gradlew
-
-          ./gradlew \
-            :app:assembleDebug \
-            --no-build-cache \
-            --rerun-tasks \
-            -Pandroid.jniCmakeArgs="-DGGML_VULKAN=ON -DSD_VULKAN=ON"
       - name: Prepare APK
         run: |
-          set -euxo pipefail
+          APK="$GITHUB_WORKSPACE/llmedge/llmedge-examples/app/build/outputs/apk/debug/app-debug.apk"
 
-          APK="$(find \
-            "$GITHUB_WORKSPACE/llmedge/llmedge-examples/app/build/outputs/apk" \
-            -type f \
-            -name '*.apk' \
-            -print -quit)"
-
-          test -n "$APK"
           test -f "$APK"
 
-          echo "APK=$APK"
-          ls -lh "$APK"
+          cp "$APK" \
+            "$GITHUB_WORKSPACE/LLMEdge-Clean-I2V-GGUFFix.apk"
 
-          rm -rf "$GITHUB_WORKSPACE/apk-check"
-          mkdir -p "$GITHUB_WORKSPACE/apk-check"
-
-          unzip -q "$APK" \
-            'lib/arm64-v8a/*.so' \
-            -d "$GITHUB_WORKSPACE/apk-check"
-
-          echo "===== VERIFY ACTUAL APK NATIVE BACKEND ====="
-
-          FOUND=0
-
-          while IFS= read -r so; do
-            echo "CHECK: $so"
-
-            if strings "$so" | grep -Fq 'WAN5D_HARD_20260914'; then
-              echo "===== WAN5D MARKER FOUND IN APK ====="
-              echo "$so"
-              FOUND=1
-            fi
-          done < <(
-            find "$GITHUB_WORKSPACE/apk-check" \
-              -type f \
-              -name '*.so'
-          )
-
-          if [ "$FOUND" != "1" ]; then
-            echo "ERROR: APK STILL CONTAINS OLD NATIVE BACKEND"
-            exit 1
-          fi
-
-          mkdir -p "$GITHUB_WORKSPACE/dist"
-
-          cp -f "$APK" \
-            "$GITHUB_WORKSPACE/dist/LLMEdge-HARD-Wan5D-LowRAM.apk"
-
-          echo "===== HARD WAN5D APK VERIFIED ====="
-          ls -lh \
-            "$GITHUB_WORKSPACE/dist/LLMEdge-HARD-Wan5D-LowRAM.apk"
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: LLMEdge-HARD-Wan5D-LowRAM
-          path: dist/LLMEdge-HARD-Wan5D-LowRAM.apk
-          compression-level: 0
+          name: LLMEdge-Clean-I2V-GGUFFix
+          path: LLMEdge-Clean-I2V-GGUFFix.apk
+          retention-days: 7

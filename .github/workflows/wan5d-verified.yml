@@ -1,0 +1,242 @@
+name: Wan5D Verified Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout builder
+        uses: actions/checkout@v4
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android Vulkan tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y glslc libvulkan-dev unzip binutils
+
+      - name: Clone official sources
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          rm -rf llmedge llmedge-examples
+
+          git clone \
+            --depth 1 \
+            --recurse-submodules \
+            https://github.com/Aatricks/llmedge.git \
+            llmedge
+
+          git -C llmedge submodule sync --recursive
+          git -C llmedge submodule update --init --recursive
+
+          rm -rf llmedge/llmedge-examples
+
+          git clone \
+            --depth 1 \
+            https://github.com/Aatricks/llmedge-examples.git \
+            llmedge/llmedge-examples
+
+          ln -s \
+            "$GITHUB_WORKSPACE/llmedge/llmedge-examples" \
+            "$GITHUB_WORKSPACE/llmedge-examples"
+
+          echo "===== LLMEDGE COMMIT ====="
+          git -C llmedge rev-parse HEAD
+
+          echo "===== SDCPP PIN ====="
+          git -C llmedge/stable-diffusion.cpp rev-parse HEAD
+
+      - name: Force Wan 5D capable SDCPP
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          SD="$GITHUB_WORKSPACE/llmedge/stable-diffusion.cpp"
+          READER="$SD/src/model_io/gguf_reader_ext.h"
+
+          if [ ! -f "$READER" ] || \
+             ! grep -Fq \
+             'info.shape[GGML_MAX_DIMS - 1] *= info.shape[i]' \
+             "$READER"
+          then
+              echo "Pinned SDCPP lacks Wan 5D reader. Updating SDCPP..."
+
+              git -C "$SD" fetch \
+                --depth 1 \
+                https://github.com/leejet/stable-diffusion.cpp.git \
+                master
+
+              git -C "$SD" checkout --detach FETCH_HEAD
+
+              git -C "$SD" submodule sync --recursive
+              git -C "$SD" submodule update \
+                --init \
+                --recursive \
+                --depth 1
+          fi
+
+          echo "===== ACTIVE SDCPP ====="
+          git -C "$SD" rev-parse HEAD
+
+          grep -F \
+            'info.shape[GGML_MAX_DIMS - 1] *= info.shape[i]' \
+            "$READER"
+
+          grep -F \
+            'info.shape.resize(GGML_MAX_DIMS)' \
+            "$READER"
+
+      - name: Add native verification marker
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          SRC="$GITHUB_WORKSPACE/llmedge/llmedge/src/main/cpp/sdcpp_jni_video.cpp"
+
+          test -f "$SRC"
+
+          cat >> "$SRC" <<'CPP'
+
+          extern "C"
+          __attribute__((used, visibility("default")))
+          const char* llmedge_wan5d_verified_marker() {
+              return "WAN5D_NATIVE_VERIFIED_20260914";
+          }
+          CPP
+
+          grep -F \
+            'WAN5D_NATIVE_VERIFIED_20260914' \
+            "$SRC"
+
+      - name: Apply Clean I2V LowRAM patch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 "$GITHUB_WORKSPACE/.github/scripts/patch_clean_i2v.py"
+
+      - name: Verify composite local library
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          SETTINGS="$GITHUB_WORKSPACE/llmedge/llmedge-examples/settings.gradle.kts"
+
+          test -f "$SETTINGS"
+
+          grep -F 'includeBuild("..")' "$SETTINGS"
+          grep -F 'io.aatricks:llmedge' "$SETTINGS"
+
+          echo "===== LOCAL LLMEDGE SUBSTITUTION OK ====="
+
+      - name: Build local Vulkan library
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cd "$GITHUB_WORKSPACE/llmedge"
+
+          rm -rf \
+            llmedge/.cxx \
+            llmedge/build \
+            .gradle
+
+          chmod +x ./gradlew
+
+          ./gradlew \
+            :llmedge:assembleRelease \
+            --no-build-cache \
+            --rerun-tasks \
+            -Pandroid.jniCmakeArgs="-DGGML_VULKAN=ON -DSD_VULKAN=ON"
+
+      - name: Build app against local library
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cd "$GITHUB_WORKSPACE/llmedge/llmedge-examples"
+
+          rm -rf app/build .gradle
+
+          chmod +x ./gradlew
+
+          ./gradlew \
+            :app:assembleDebug \
+            --no-build-cache \
+            --rerun-tasks \
+            -Pandroid.jniCmakeArgs="-DGGML_VULKAN=ON -DSD_VULKAN=ON"
+
+      - name: Verify final APK native backend
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          APK="$(
+            find \
+              "$GITHUB_WORKSPACE/llmedge/llmedge-examples/app/build/outputs/apk" \
+              -type f \
+              -name '*.apk' \
+              -print \
+            | head -n 1
+          )"
+
+          test -n "$APK"
+          test -f "$APK"
+
+          echo "APK=$APK"
+          ls -lh "$APK"
+
+          rm -rf "$GITHUB_WORKSPACE/apk-native-check"
+          mkdir -p "$GITHUB_WORKSPACE/apk-native-check"
+
+          unzip -q "$APK" \
+            'lib/arm64-v8a/*.so' \
+            -d "$GITHUB_WORKSPACE/apk-native-check"
+
+          FOUND=0
+
+          while IFS= read -r SO; do
+              if strings "$SO" \
+                | grep -Fq 'WAN5D_NATIVE_VERIFIED_20260914'
+              then
+                  echo "===== VERIFIED NATIVE LIB ====="
+                  echo "$SO"
+                  FOUND=1
+              fi
+          done < <(
+              find "$GITHUB_WORKSPACE/apk-native-check" \
+                -type f \
+                -name '*.so'
+          )
+
+          if [ "$FOUND" != "1" ]; then
+              echo "ERROR: APP DID NOT PACKAGE THE NEW LOCAL NATIVE BACKEND"
+              exit 1
+          fi
+
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+
+          cp -f "$APK" \
+            "$GITHUB_WORKSPACE/dist/LLMEdge-Wan5D-Verified-LowRAM.apk"
+
+          echo "===== VERIFIED APK READY ====="
+          ls -lh \
+            "$GITHUB_WORKSPACE/dist/LLMEdge-Wan5D-Verified-LowRAM.apk"
+
+      - name: Upload verified APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMEdge-Wan5D-Verified-LowRAM
+          path: dist/LLMEdge-Wan5D-Verified-LowRAM.apk
+          compression-level: 0
