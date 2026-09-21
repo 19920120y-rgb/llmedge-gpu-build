@@ -161,11 +161,12 @@ jobs:
             "$GITHUB_WORKSPACE/llmedge/llmedge-examples" \
             | head -n 20 || true
 
-          echo "===== REAL SDCPP MARKER ====="
+          echo "===== REAL GGUF LOADER MARKER ====="
 
-          grep -F \
-            'REAL_SDCPP_WAN5D_20260921' \
-            "$GITHUB_WORKSPACE/llmedge/stable-diffusion.cpp/src/stable-diffusion.cpp"
+          grep -RniF \
+            'WAN5D_REAL_LOADER_20260921' \
+            "$GITHUB_WORKSPACE/llmedge/stable-diffusion.cpp/src" \
+            | head -n 20
 
       - name: Build Vulkan LLMEdge
         shell: bash
