@@ -117,30 +117,27 @@ jobs:
               exit 1
           fi
 
-      - name: Put marker inside actual SDCPP
+      - name: Tag real GGUF fallback path
         shell: bash
         run: |
           set -euxo pipefail
 
           SD="$GITHUB_WORKSPACE/llmedge/stable-diffusion.cpp"
 
-          SRC="$SD/src/stable-diffusion.cpp"
+          TARGET="$(grep -RIlF 'Try to open it with GGUFReader' "$SD/src" | head -n 1)"
 
-          test -f "$SRC"
+          test -n "$TARGET"
+          test -f "$TARGET"
 
-          printf '%s\n' \
-            '' \
-            'extern "C"' \
-            '__attribute__((used, visibility("default")))' \
-            'const char* llmedge_real_sdcpp_wan5d_marker() {' \
-            '    return "REAL_SDCPP_WAN5D_20260921";' \
-            '}' \
-            >> "$SRC"
+          echo "PATCHING=$TARGET"
+
+          sed -i \
+            's/Try to open it with GGUFReader/Try to open it with GGUFReader [WAN5D_FALLBACK_VERIFIED_20260921]/g' \
+            "$TARGET"
 
           grep -F \
-            'REAL_SDCPP_WAN5D_20260921' \
-            "$SRC"
-
+            'WAN5D_FALLBACK_VERIFIED_20260921' \
+            "$TARGET"
       - name: Apply Clean I2V LowRAM patch
         shell: bash
         run: |
@@ -213,14 +210,7 @@ jobs:
         run: |
           set -euxo pipefail
 
-          APK="$(
-            find \
-              "$GITHUB_WORKSPACE/llmedge/llmedge-examples/app/build/outputs/apk" \
-              -type f \
-              -name '*.apk' \
-              -print \
-            | head -n 1
-          )"
+          APK="$(find "$GITHUB_WORKSPACE/llmedge/llmedge-examples/app/build/outputs/apk" -type f -name '*.apk' -print | head -n 1)"
 
           test -n "$APK"
           test -f "$APK"
@@ -231,60 +221,35 @@ jobs:
           rm -rf "$GITHUB_WORKSPACE/apk-check"
           mkdir -p "$GITHUB_WORKSPACE/apk-check"
 
-          unzip -q "$APK" \
-            'lib/arm64-v8a/*.so' \
-            -d "$GITHUB_WORKSPACE/apk-check"
+          unzip -q "$APK" 'lib/arm64-v8a/*.so' -d "$GITHUB_WORKSPACE/apk-check"
 
-          PASS=0
+          FOUND=""
 
           while IFS= read -r SO; do
+            if strings "$SO" | grep -Fq 'WAN5D_FALLBACK_VERIFIED_20260921'; then
+              FOUND="$SO"
+              break
+            fi
+          done < <(find "$GITHUB_WORKSPACE/apk-check" -type f -name '*.so')
 
-              HAS_MARKER=0
-              HAS_FALLBACK=0
-
-              strings "$SO" \
-                | grep -Fq 'REAL_SDCPP_WAN5D_20260921' \
-                && HAS_MARKER=1 || true
-
-              strings "$SO" \
-                | grep -qiE 'GGUFReader|Try to open.*GGUFReader' \
-                && HAS_FALLBACK=1 || true
-
-              if [ "$HAS_MARKER" = "1" ]; then
-                  echo
-                  echo "===== REAL SDCPP FOUND ====="
-                  echo "$SO"
-                  echo "MARKER=$HAS_MARKER"
-                  echo "GGUF_FALLBACK=$HAS_FALLBACK"
-
-                  if [ "$HAS_FALLBACK" = "1" ]; then
-                      PASS=1
-                  fi
-              fi
-
-          done < <(
-              find "$GITHUB_WORKSPACE/apk-check" \
-                -type f \
-                -name '*.so'
-          )
-
-          if [ "$PASS" != "1" ]; then
-              echo
-              echo "ERROR: APK DOES NOT CONTAIN VERIFIED WAN5D SDCPP"
-              exit 1
+          if [ -z "$FOUND" ]; then
+            echo "ERROR: REAL GGUF FALLBACK NOT PRESENT IN APK"
+            exit 1
           fi
+
+          echo "===== VERIFIED REAL SDCPP ====="
+          echo "$FOUND"
+
+          strings "$FOUND" | grep -F \
+            'WAN5D_FALLBACK_VERIFIED_20260921'
 
           mkdir -p "$GITHUB_WORKSPACE/dist"
 
           cp -f "$APK" \
             "$GITHUB_WORKSPACE/dist/LLMEdge-REAL-Wan5D-LowRAM.apk"
 
-          echo
           echo "===== REAL WAN5D APK VERIFIED ====="
-
-          ls -lh \
-            "$GITHUB_WORKSPACE/dist/LLMEdge-REAL-Wan5D-LowRAM.apk"
-
+          ls -lh "$GITHUB_WORKSPACE/dist/LLMEdge-REAL-Wan5D-LowRAM.apk"
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
