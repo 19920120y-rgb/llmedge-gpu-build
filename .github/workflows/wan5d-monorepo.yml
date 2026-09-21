@@ -2,6 +2,11 @@ name: Wan5D Monorepo Verified
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/wan5d-monorepo.yml'
 
 jobs:
   build:
