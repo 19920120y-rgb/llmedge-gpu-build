@@ -117,26 +117,26 @@ jobs:
               exit 1
           fi
 
-      - name: Tag real GGUF fallback path
+      - name: Tag live GGUF loader
         shell: bash
         run: |
           set -euxo pipefail
 
           SD="$GITHUB_WORKSPACE/llmedge/stable-diffusion.cpp"
 
-          TARGET="$(grep -RIlF 'Try to open it with GGUFReader' "$SD/src" | head -n 1)"
+          TARGET="$(grep -RIlF 'using gguf format' "$SD/src" | head -n 1)"
 
           test -n "$TARGET"
           test -f "$TARGET"
 
-          echo "PATCHING=$TARGET"
+          echo "GGUF_LOADER_SOURCE=$TARGET"
 
           sed -i \
-            's/Try to open it with GGUFReader/Try to open it with GGUFReader [WAN5D_FALLBACK_VERIFIED_20260921]/g' \
+            '0,/using gguf format/s//using gguf format [WAN5D_REAL_LOADER_20260921]/' \
             "$TARGET"
 
           grep -F \
-            'WAN5D_FALLBACK_VERIFIED_20260921' \
+            'WAN5D_REAL_LOADER_20260921' \
             "$TARGET"
       - name: Apply Clean I2V LowRAM patch
         shell: bash
@@ -226,29 +226,28 @@ jobs:
           FOUND=""
 
           while IFS= read -r SO; do
-            if strings "$SO" | grep -Fq 'WAN5D_FALLBACK_VERIFIED_20260921'; then
+            if strings "$SO" | grep -Fq 'WAN5D_REAL_LOADER_20260921'; then
               FOUND="$SO"
               break
             fi
           done < <(find "$GITHUB_WORKSPACE/apk-check" -type f -name '*.so')
 
           if [ -z "$FOUND" ]; then
-            echo "ERROR: REAL GGUF FALLBACK NOT PRESENT IN APK"
+            echo "ERROR: NEW GGUF LOADER NOT PRESENT IN APK"
             exit 1
           fi
 
-          echo "===== VERIFIED REAL SDCPP ====="
+          echo "===== NEW GGUF LOADER VERIFIED ====="
           echo "$FOUND"
 
-          strings "$FOUND" | grep -F \
-            'WAN5D_FALLBACK_VERIFIED_20260921'
+          strings "$FOUND" | grep -F 'WAN5D_REAL_LOADER_20260921'
 
           mkdir -p "$GITHUB_WORKSPACE/dist"
 
           cp -f "$APK" \
             "$GITHUB_WORKSPACE/dist/LLMEdge-REAL-Wan5D-LowRAM.apk"
 
-          echo "===== REAL WAN5D APK VERIFIED ====="
+          echo "===== VERIFIED APK READY ====="
           ls -lh "$GITHUB_WORKSPACE/dist/LLMEdge-REAL-Wan5D-LowRAM.apk"
       - name: Upload APK
         uses: actions/upload-artifact@v4
