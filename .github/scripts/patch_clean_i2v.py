@@ -364,7 +364,7 @@ old = """private fun safeBudgetBytes(memory: VideoMemorySnapshot): Long {
     }"""
 
 new = """private fun safeBudgetBytes(memory: VideoMemorySnapshot): Long {
-        val reserve = MIN_DEVICE_RESERVE_BYTES
+        val reserve = 256L * MEBIBYTE
         return (memory.availableSystemBytes - reserve).coerceAtLeast(0L)
     }"""
 
