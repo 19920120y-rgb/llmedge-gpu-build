@@ -128,14 +128,14 @@ jobs:
 
           test -f "$SRC"
 
-          cat >> "$SRC" <<'CPP'
-
-          extern "C"
-          __attribute__((used, visibility("default")))
-          const char* llmedge_real_sdcpp_wan5d_marker() {
-              return "REAL_SDCPP_WAN5D_20260921";
-          }
-CPP
+          printf '%s\n' \
+            '' \
+            'extern "C"' \
+            '__attribute__((used, visibility("default")))' \
+            'const char* llmedge_real_sdcpp_wan5d_marker() {' \
+            '    return "REAL_SDCPP_WAN5D_20260921";' \
+            '}' \
+            >> "$SRC"
 
           grep -F \
             'REAL_SDCPP_WAN5D_20260921' \
