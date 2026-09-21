@@ -1,0 +1,288 @@
+name: Wan5D Monorepo Verified
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout builder
+        uses: actions/checkout@v4
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install build tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            glslc \
+            libvulkan-dev \
+            unzip \
+            binutils
+
+      - name: Clone complete LLMEdge monorepo
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          rm -rf llmedge llmedge-examples
+
+          git clone \
+            --depth 1 \
+            --recurse-submodules \
+            https://github.com/Aatricks/llmedge.git \
+            llmedge
+
+          git -C llmedge submodule sync --recursive
+          git -C llmedge submodule update \
+            --init \
+            --recursive
+
+          # patch_clean_i2v.py互換
+          ln -sfn \
+            "$GITHUB_WORKSPACE/llmedge/llmedge-examples" \
+            "$GITHUB_WORKSPACE/llmedge-examples"
+
+          echo "===== LLMEDGE ====="
+          git -C llmedge rev-parse HEAD
+
+          echo "===== SDCPP PIN ====="
+          git -C llmedge/stable-diffusion.cpp rev-parse HEAD
+
+          echo "===== EXAMPLES PIN ====="
+          git -C llmedge/llmedge-examples rev-parse HEAD
+
+      - name: Force compatible Wan2.2 SDCPP
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          SD="$GITHUB_WORKSPACE/llmedge/stable-diffusion.cpp"
+
+          echo "===== CHECK PINNED SDCPP ====="
+
+          if ! grep -RqiE \
+            'GGUFReader|Try to open.*GGUFReader' \
+            "$SD/src"
+          then
+              echo "Pinned SDCPP is too old. Updating Aatricks fork..."
+
+              git -C "$SD" fetch \
+                --depth 1 \
+                origin \
+                HEAD
+
+              git -C "$SD" checkout --detach FETCH_HEAD
+
+              git -C "$SD" submodule sync --recursive
+              git -C "$SD" submodule update \
+                --init \
+                --recursive
+          fi
+
+          echo "===== ACTIVE SDCPP COMMIT ====="
+          git -C "$SD" rev-parse HEAD
+
+          echo "===== VERIFY GGUF FALLBACK ====="
+          grep -RniE \
+            'GGUFReader|Try to open.*GGUFReader' \
+            "$SD/src" \
+            | head -n 20
+
+          echo "===== VERIFY WAN SUPPORT ====="
+          grep -RniE \
+            'Wan2\.2|WAN2_2|TI2V' \
+            "$SD/src" \
+            | head -n 30
+
+          if ! grep -RqiE \
+            'GGUFReader|Try to open.*GGUFReader' \
+            "$SD/src"
+          then
+              echo "ERROR: SDCPP STILL HAS NO GGUF FALLBACK"
+              exit 1
+          fi
+
+      - name: Put marker inside actual SDCPP
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          SD="$GITHUB_WORKSPACE/llmedge/stable-diffusion.cpp"
+
+          SRC="$SD/src/stable-diffusion.cpp"
+
+          test -f "$SRC"
+
+          cat >> "$SRC" <<'CPP'
+
+          extern "C"
+          __attribute__((used, visibility("default")))
+          const char* llmedge_real_sdcpp_wan5d_marker() {
+              return "REAL_SDCPP_WAN5D_20260921";
+          }
+CPP
+
+          grep -F \
+            'REAL_SDCPP_WAN5D_20260921' \
+            "$SRC"
+
+      - name: Apply Clean I2V LowRAM patch
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          python3 \
+            "$GITHUB_WORKSPACE/.github/scripts/patch_clean_i2v.py"
+
+      - name: Verify exact source tree
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          echo "===== EXAMPLE SOURCE ====="
+
+          test -d \
+            "$GITHUB_WORKSPACE/llmedge/llmedge-examples"
+
+          grep -Rni \
+            'Image-to-Video' \
+            "$GITHUB_WORKSPACE/llmedge/llmedge-examples" \
+            | head -n 20 || true
+
+          echo "===== REAL SDCPP MARKER ====="
+
+          grep -F \
+            'REAL_SDCPP_WAN5D_20260921' \
+            "$GITHUB_WORKSPACE/llmedge/stable-diffusion.cpp/src/stable-diffusion.cpp"
+
+      - name: Build Vulkan LLMEdge
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cd "$GITHUB_WORKSPACE/llmedge"
+
+          rm -rf \
+            llmedge/.cxx \
+            llmedge/build \
+            .gradle
+
+          chmod +x ./gradlew
+
+          ./gradlew \
+            :llmedge:assembleRelease \
+            --no-build-cache \
+            --rerun-tasks \
+            -Pandroid.injected.build.api=30 \
+            -Pandroid.jniCmakeArgs="-DGGML_VULKAN=ON -DSD_VULKAN=ON"
+
+      - name: Build bundled example app
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cd "$GITHUB_WORKSPACE/llmedge/llmedge-examples"
+
+          rm -rf app/build .gradle
+
+          chmod +x ../gradlew
+
+          ../gradlew \
+            :app:assembleDebug \
+            --no-build-cache \
+            --rerun-tasks \
+            -Pandroid.jniCmakeArgs="-DGGML_VULKAN=ON -DSD_VULKAN=ON"
+
+      - name: Verify runtime SDCPP inside APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          APK="$(
+            find \
+              "$GITHUB_WORKSPACE/llmedge/llmedge-examples/app/build/outputs/apk" \
+              -type f \
+              -name '*.apk' \
+              -print \
+            | head -n 1
+          )"
+
+          test -n "$APK"
+          test -f "$APK"
+
+          echo "APK=$APK"
+          ls -lh "$APK"
+
+          rm -rf "$GITHUB_WORKSPACE/apk-check"
+          mkdir -p "$GITHUB_WORKSPACE/apk-check"
+
+          unzip -q "$APK" \
+            'lib/arm64-v8a/*.so' \
+            -d "$GITHUB_WORKSPACE/apk-check"
+
+          PASS=0
+
+          while IFS= read -r SO; do
+
+              HAS_MARKER=0
+              HAS_FALLBACK=0
+
+              strings "$SO" \
+                | grep -Fq 'REAL_SDCPP_WAN5D_20260921' \
+                && HAS_MARKER=1 || true
+
+              strings "$SO" \
+                | grep -qiE 'GGUFReader|Try to open.*GGUFReader' \
+                && HAS_FALLBACK=1 || true
+
+              if [ "$HAS_MARKER" = "1" ]; then
+                  echo
+                  echo "===== REAL SDCPP FOUND ====="
+                  echo "$SO"
+                  echo "MARKER=$HAS_MARKER"
+                  echo "GGUF_FALLBACK=$HAS_FALLBACK"
+
+                  if [ "$HAS_FALLBACK" = "1" ]; then
+                      PASS=1
+                  fi
+              fi
+
+          done < <(
+              find "$GITHUB_WORKSPACE/apk-check" \
+                -type f \
+                -name '*.so'
+          )
+
+          if [ "$PASS" != "1" ]; then
+              echo
+              echo "ERROR: APK DOES NOT CONTAIN VERIFIED WAN5D SDCPP"
+              exit 1
+          fi
+
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+
+          cp -f "$APK" \
+            "$GITHUB_WORKSPACE/dist/LLMEdge-REAL-Wan5D-LowRAM.apk"
+
+          echo
+          echo "===== REAL WAN5D APK VERIFIED ====="
+
+          ls -lh \
+            "$GITHUB_WORKSPACE/dist/LLMEdge-REAL-Wan5D-LowRAM.apk"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMEdge-REAL-Wan5D-LowRAM
+          path: dist/LLMEdge-REAL-Wan5D-LowRAM.apk
+          compression-level: 0
