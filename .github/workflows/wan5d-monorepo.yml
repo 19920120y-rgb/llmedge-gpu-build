@@ -77,7 +77,7 @@ jobs:
           echo "===== CHECK PINNED SDCPP ====="
 
           if ! grep -RqiE \
-            'GGUFReader|Try to open.*GGUFReader' \
+            'FORCE_LATEST_SDCPP_20260926' \
             "$SD/src"
           then
               echo "Pinned SDCPP is too old. Updating Aatricks fork..."
