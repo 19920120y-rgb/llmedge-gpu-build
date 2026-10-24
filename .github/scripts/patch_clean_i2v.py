@@ -380,3 +380,7 @@ print("===== CLEAN PATCH VERIFIED =====")
 print("Official TAEHV preserved")
 print("Local GGUF + Local T5 + TAEHV")
 print("Sequential loading ON")
+
+# WAN22_QUALITY_PATCH_CALL_V1: direct original GGUF, no header conversion
+import runpy
+runpy.run_path(str(Path(__file__).with_name('patch_wan22_quality.py')), run_name='__main__')
