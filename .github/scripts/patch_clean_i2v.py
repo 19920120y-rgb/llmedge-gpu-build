@@ -384,3 +384,6 @@ print("Sequential loading ON")
 # WAN22_QUALITY_PATCH_CALL_V1: direct original GGUF, no header conversion
 import runpy
 runpy.run_path(str(Path(__file__).with_name('patch_wan22_quality.py')), run_name='__main__')
+
+# WAN22_SEPARATE_INSTALL_V1: never overwrite existing signed Clean I2V app
+runpy.run_path(str(Path(__file__).with_name('patch_wan22_separate_install.py')), run_name='__main__')
